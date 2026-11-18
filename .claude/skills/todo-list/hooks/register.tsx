@@ -144,6 +144,22 @@ async function openPane($: EngineInterface, resize = false): Promise<void> {
   await $.ui.open({ id: PANE, title: 'Plan', rows, columns: PANE_COLUMNS })
 }
 
+// The pane shows only while there is a plan: it opens when the plan goes from empty to non-empty
+// and closes when the plan empties. A pane the person closed stays closed until the next new plan.
+// Its own guard: a pane failure must never turn a plan change that already landed into an error.
+async function syncPane($: EngineInterface, wasEmpty: boolean): Promise<void> {
+  await guard($, 'pane sync', undefined, async () => {
+    const isEmpty = (await read($, plan)).nodes.length === 0
+    if (isEmpty === wasEmpty) return
+    // Unasked, like the old session-start open: only where a terminal draws (not a -p run or the SDK).
+    if (!isEmpty) {
+      if ((await $.session.surfaces()).includes('terminal')) await openPane($)
+      return
+    }
+    if ((await $.ui.panes()).some(pane => pane.id === PANE)) await $.ui.close({ id: PANE })
+  })
+}
+
 // Re-opens the listed pane so the host sizes it for the terminal and plan as they are now.
 // The fit is recorded first: the re-open redraws the pane, and that render must find the same
 // fit and stop. A pane the person closed is not listed and is left closed.
@@ -203,9 +219,11 @@ async function runTodoCommand(
     return { text: word === 'on' ? 'Plan enforcement is on.' : 'Plan enforcement is off for this session.' }
   }
   if (word !== 'clear') return { text: USAGE }
+  const wasEmpty = (await read($, plan)).nodes.length === 0
   await update($, plan, () => emptyPlan())
   await update($, task, () => EMPTY_TASK)
   await refreshStatus($)
+  await syncPane($, wasEmpty)
 
   return { text: 'Plan cleared.' }
 }
@@ -293,7 +311,9 @@ async function answerPlanCall($: EngineInterface, input: unknown, agentId: strin
   if ('error' in parsed) return parsed.error
   const now = await $.clock.now()
   let applied = { error: 'Error: plan unchanged.' } as PlanApplied
+  let wasEmpty = true
   await update($, plan, (cur: Plan) => {
+    wasEmpty = cur.nodes.length === 0
     applied = applyPlanOp(cur, parsed.parsed, now)
 
     return 'error' in applied ? cur : applied.plan
@@ -301,6 +321,7 @@ async function answerPlanCall($: EngineInterface, input: unknown, agentId: strin
   if ('error' in applied) return applied.error
   if (touchesPlan(parsed.parsed)) await update($, task, onPlanTouched)
   await refreshStatus($)
+  await syncPane($, wasEmpty)
 
   return applied.text
 }
@@ -314,7 +335,9 @@ async function mirror($: EngineInterface, name: string, apply: (cur: Plan, now: 
   // `update` runs the reducer again when its write misses ifVersion, so every attempt assigns the
   // whole outcome: a result from an earlier attempt must not outlive a retry that differs.
   let outcome = { kind: 'failed', text: 'plan unchanged' } as { kind: 'ok' | 'failed' | 'ignored'; text: string }
+  let wasEmpty = true
   await update($, plan, (cur: Plan) => {
+    wasEmpty = cur.nodes.length === 0
     const out = apply(cur, now)
     if ('error' in out) {
       outcome = { kind: 'failed', text: out.error }
@@ -343,6 +366,7 @@ async function mirror($: EngineInterface, name: string, apply: (cur: Plan, now: 
   }
   await update($, task, onPlanTouched)
   await refreshStatus($)
+  await syncPane($, wasEmpty)
 }
 
 // The call id as the activity reducer should see it: a blank id is absent, so the name fallback applies.
@@ -443,13 +467,11 @@ export const register: Register = (on, options) => {
         description: 'Show the plan pane, clear the plan, or turn plan enforcement off or on',
         argumentHint: 'clear | off | on | color <name|#hex|reset>',
       })
-      // The pane opens unasked only on the terminal under a person at the prompt. The host leaves
-      // an unasked open undrawn below 110 columns, so the first prompt (an open the person asked
-      // for, placed at any width) opens it again if it is still unplaced.
-      if (e.isInteractive && e.surface === 'terminal') {
-        await update($, firstPromptOpen, () => 'armed')
-        await openPane($)
-      }
+      // The pane opens only on the terminal under a person at the prompt, and only once there is a
+      // plan (syncPane). The host leaves an unasked open undrawn on a narrow terminal, so the first
+      // prompt with a plan (an open the person asked for, placed at any width) opens it again if it
+      // is still unplaced.
+      if (e.isInteractive && e.surface === 'terminal') await update($, firstPromptOpen, () => 'armed')
     })
 
     return next(e)
@@ -546,6 +568,10 @@ export const register: Register = (on, options) => {
     if (e.reason === 'clear') {
       await guard($, 'session.end', undefined, () => applyActivity($, { type: 'sessionClear' }))
       await guard($, 'session.end', undefined, () => update($, dropShown, () => false))
+      // The plan resets with the atoms after this hook, so the pane goes with it.
+      await guard($, 'session.end pane', undefined, async () => {
+        if ((await $.ui.panes()).some(pane => pane.id === PANE)) await $.ui.close({ id: PANE })
+      })
     }
 
     return next(e)
@@ -635,6 +661,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     await guard($, 'first prompt open', undefined, async () => {
       if ((await read($, firstPromptOpen)) !== 'armed') return
+      if ((await read($, plan)).nodes.length === 0) return
       await update($, firstPromptOpen, () => 'done')
       if (!(await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)) await openPane($)
     })

@@ -28,11 +28,13 @@ let seenIds: string[] = []
 const lastId = (): string => seenIds.at(-1) ?? ''
 
 // The world beneath the mod: a clock, a log sink and a status recorder.
-const setup = (on: On): { logs: string[]; statuses: Array<string | undefined> } => {
+const setup = (on: On, hostPanes = true, onTerminal = true): { logs: string[]; statuses: Array<string | undefined> } => {
   const logs: string[] = []
   const statuses: Array<string | undefined> = []
   seenIds = []
   mock.clock(on)
+  // Where the session draws: the terminal unless a test says none, so a new plan opens the pane.
+  on('session.surfaces', async () => ({ value: onTerminal ? ['terminal' as const] : [] }))
   on('tool.call', async (_$, e, next) => {
     seenIds.push(e.tool_use_id)
 
@@ -48,6 +50,12 @@ const setup = (on: On): { logs: string[]; statuses: Array<string | undefined> } 
 
     return next(e)
   })
+  // A host with no panes that places every open. A test that hooks the pane events itself passes false.
+  if (hostPanes) {
+    on('ui.panes', async () => ({ value: [] }))
+    on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+    on('ui.close', async () => ({ value: undefined }))
+  }
 
   return { logs, statuses }
 }
@@ -185,7 +193,7 @@ test('session.start does not invalidate tool.describe when registration fails', 
 })
 
 test('/todo with no args opens the pane', async ($, on) => {
-  setup(on)
+  setup(on, false)
   on('ui.panes', async () => ({ value: [] }))
   const opened: string[] = []
   on('ui.open', async (_$, e) => {
@@ -198,28 +206,79 @@ test('/todo with no args opens the pane', async ($, on) => {
   expect(opened).toEqual(['todo'])
 })
 
-test('the first prompt opens an unplaced pane once, and later prompts leave it closed', async ($, on) => {
-  setup(on)
+test('no pane opens without a plan; the first prompt with a plan opens an unplaced pane once', async ($, on) => {
+  setup(on, false)
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('command.register', async () => ({ value: { command: 'todo' } }))
   on('prompt.submit', async (_$, e) => ({ text: e.text, context: e.context }))
-  on('ui.panes', async () => ({ value: [{ id: 'todo', title: 'Plan', isShown: true, isFocused: false, isPlaced: false }] }))
+  let listed = false
+  on('ui.panes', async () => ({
+    value: listed ? [{ id: 'todo', title: 'Plan', isShown: true, isFocused: false, isPlaced: false }] : [],
+  }))
   const opened: string[] = []
   on('ui.open', async (_$, e) => {
     opened.push(e.id)
+    listed = true
 
     return { value: { isPlaced: false as const, reason: 'narrow' } }
   })
+  on('ui.close', async () => ({ value: undefined }))
   await $.session.start({ cwd: '/tmp', isInteractive: true, surface: 'terminal' })
-  expect(opened).toEqual(['todo'])
   await $.prompt.submit({ text: 'one', wait: false, origin: USER })
-  expect(opened).toEqual(['todo', 'todo'])
+  expect(opened).toEqual([])
+  await $.tool.call(SET)
+  expect(opened).toEqual(['todo'])
   await $.prompt.submit({ text: 'two', wait: false, origin: USER })
+  expect(opened).toEqual(['todo', 'todo'])
+  await $.prompt.submit({ text: 'three', wait: false, origin: USER })
   expect(opened).toEqual(['todo', 'todo'])
 })
 
+test('a new plan opens no pane where no terminal draws', async ($, on) => {
+  const { logs } = setup(on, false, false)
+  const opened: string[] = []
+  on('ui.panes', async () => ({ value: [] }))
+  on('ui.open', async (_$, e) => {
+    opened.push(e.id)
+
+    return { value: { isPlaced: true as const } }
+  })
+  await $.tool.call(SET)
+  expect(opened).toEqual([])
+  expect(logs).toEqual([])
+})
+
+test('a new plan opens the pane and clearing it closes the pane', async ($, on) => {
+  setup(on, false)
+  let listed = false
+  on('ui.panes', async () => ({
+    value: listed ? [{ id: 'todo', title: 'Plan', isShown: true, isFocused: false, isPlaced: true }] : [],
+  }))
+  const calls: string[] = []
+  on('ui.open', async (_$, e) => {
+    calls.push(`open ${e.id}`)
+    listed = true
+
+    return { value: { isPlaced: true as const } }
+  })
+  on('ui.close', async (_$, e) => {
+    calls.push(`close ${e.id}`)
+    listed = false
+
+    return { value: undefined }
+  })
+  await $.tool.call(SET)
+  await $.tool.call({ tool: TOOL, op: 'update', updates: [{ id: '1.1', status: 'completed' }] })
+  expect(calls).toEqual(['open todo'])
+  await $.command.run(todo('clear'))
+  expect(calls).toEqual(['open todo', 'close todo'])
+  // Clearing an empty plan touches nothing.
+  await $.command.run(todo('clear'))
+  expect(calls).toEqual(['open todo', 'close todo'])
+})
+
 test('/todo opens the pane with the dock width and a row count that fits the plan', async ($, on) => {
-  setup(on)
+  setup(on, false)
   on('ui.panes', async () => ({ value: [] }))
   const asked: Array<{ rows?: number; columns?: number }> = []
   on('ui.open', async (_$, e) => {
@@ -230,15 +289,17 @@ test('/todo opens the pane with the dock width and a row count that fits the pla
   await $.command.run(todo(''))
   await $.tool.call(SET)
   await $.command.run(todo(''))
-  // An empty plan is one line, clamped up to 6; the 3-leaf plan's tree is 7 lines.
+  // An empty plan is one line, clamped up to 6; the 3-leaf plan's tree is 7 lines. The middle
+  // open is the new plan opening the pane.
   expect(asked).toEqual([
     { rows: 6, columns: 56 },
+    { rows: 7, columns: 56 },
     { rows: 7, columns: 56 },
   ])
 })
 
 test('/todo closes an open pane first so the open asks for the height the plan wants now', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const calls: string[] = []
   const pane = { id: 'todo', title: 'Plan', isShown: true, isFocused: false, isPlaced: true }
   on('ui.panes', async () => ({ value: [pane] }))
@@ -253,12 +314,13 @@ test('/todo closes an open pane first so the open asks for the height the plan w
     return { value: { isPlaced: true as const } }
   })
   await $.tool.call(SET)
+  calls.length = 0
   await $.command.run(todo(''))
   expect(calls).toEqual(['close todo', 'open todo 7'])
 })
 
 test('/todo adds the fullscreen tip only on a wide main-screen layout', async ($, on) => {
-  setup(on)
+  setup(on, false)
   on('ui.panes', async () => ({ value: [] }))
   on('ui.open', async () => ({ value: { isPlaced: true as const } }))
   const tip = 'Tip: the fullscreen layout docks this pane beside the transcript.'
@@ -1161,7 +1223,7 @@ test('an invalid accentColor plugin option falls back to the default', { options
 })
 
 test('a pane with few body rows keeps the current step in view and counts what it hides', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const leaves = (from: number, to: number): Array<{ title: string }> =>
     Array.from({ length: to - from + 1 }, (_, i) => ({ title: `Leaf ${from + i}` }))
   await $.tool.call({
@@ -1211,9 +1273,11 @@ const recordPane = (on: On, listed: boolean): string[] => {
 }
 
 test('a render at a new viewport size closes and re-opens the pane once with the plan rows', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const calls = recordPane(on, true)
   await $.tool.call(SET)
+  // The new plan opens the pane (syncPane); only the renders after it are under test.
+  calls.length = 0
   await drawAt($, 120, 20)
   expect(calls).toEqual(['close todo', 'open todo 7'])
   await drawAt($, 120, 45)
@@ -1221,7 +1285,7 @@ test('a render at a new viewport size closes and re-opens the pane once with the
 })
 
 test('a render at the same viewport size twice re-opens nothing the second time', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const calls = recordPane(on, true)
   await drawAt($, 120, 20)
   const first = calls.length
@@ -1231,7 +1295,7 @@ test('a render at the same viewport size twice re-opens nothing the second time'
 })
 
 test('a pane the person closed is never re-opened by a render', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const calls = recordPane(on, false)
   await drawAt($, 120, 20)
   await drawAt($, 46, 45)
@@ -1239,7 +1303,7 @@ test('a pane the person closed is never re-opened by a render', async ($, on) =>
 })
 
 test('a viewport change to 80 columns closes nothing and keeps the pane open', async ($, on) => {
-  setup(on)
+  setup(on, false)
   const calls = recordPane(on, true)
   await drawAt($, 80, 20)
   await drawAt($, 46, 45)
