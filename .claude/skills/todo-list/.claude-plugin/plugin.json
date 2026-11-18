@@ -1,6 +1,6 @@
 {
   "name": "todo-list",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Plan trees written by Claude through a plan tool, shown in a pane and status line with live activity.",
   "author": {
     "name": "0xnicholasy",
@@ -23,6 +23,12 @@
       "title": "Enforce plan",
       "description": "Block state-changing tools until a plan exists",
       "default": true
+    },
+    "statusLine": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Also show the plan and live activity as a status line under the prompt",
+      "default": false
     },
     "accentColor": {
       "type": "string",

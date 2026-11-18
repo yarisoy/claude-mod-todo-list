@@ -75,6 +75,7 @@ declare module 'claude-code' {
       dropShown: boolean
       accentOverride: string | null
       firstPromptOpen: 'idle' | 'armed' | 'done'
+      statusShown: boolean
       planTool: { name: string | null; offered: boolean }
       paneFit: { columns: number; rows: number; placement: string; wantRows: number } | null
     }

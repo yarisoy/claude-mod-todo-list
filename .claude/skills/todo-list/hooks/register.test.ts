@@ -72,6 +72,24 @@ test('plan set updates the plan, the status line and returns the text tree', asy
   expect((await $.tool.call(SHOW)).result).toBe(out.result)
 })
 
+test('with the statusLine option off (the default) a session draws no status line', async ($, on) => {
+  const { statuses } = setup(on)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', async () => ({ value: { command: 'todo' } }))
+  await $.session.start({ cwd: '/tmp', isInteractive: true, surface: 'terminal' })
+  await $.tool.call(SET)
+  expect(statuses).toEqual([])
+})
+
+test('with the statusLine option on a session draws the status line', { options: { statusLine: true } }, async ($, on) => {
+  const { statuses } = setup(on)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', async () => ({ value: { command: 'todo' } }))
+  await $.session.start({ cwd: '/tmp', isInteractive: true, surface: 'terminal' })
+  await $.tool.call(SET)
+  expect(statuses).toEqual(['Plan 0/3 · Outline'])
+})
+
 test('a bad plan op returns Error text and leaves the plan unchanged', async ($, on) => {
   const { statuses } = setup(on)
   const set = await $.tool.call(SET)
@@ -456,7 +474,7 @@ const pending = (): { wait: Promise<void>; release: () => void } => {
   return { wait, release }
 }
 
-test('running a tool shows Running <tool>, and PostToolUse falls back to Working', async ($, on) => {
+test('running a tool shows Running <tool>, and PostToolUse falls back to Working', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUse', async () => ({}))
   const gate = pending()
@@ -478,7 +496,7 @@ test('running a tool shows Running <tool>, and PostToolUse falls back to Working
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('a tool that fails still ends the running state', async ($, on) => {
+test('a tool that fails still ends the running state', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUseFailure', async () => ({}))
   stubBash(on)
@@ -489,7 +507,7 @@ test('a tool that fails still ends the running state', async ($, on) => {
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('a parallel batch keeps Running until the last call ends, and an unknown id changes nothing', async ($, on) => {
+test('a parallel batch keeps Running until the last call ends, and an unknown id changes nothing', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUse', async () => ({}))
   on('classic.PostToolUseFailure', async () => ({}))
@@ -513,7 +531,7 @@ test('a parallel batch keeps Running until the last call ends, and an unknown id
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('a parallel batch of the same tool keeps Running by id, so only id wiring at toolStart passes', async ($, on) => {
+test('a parallel batch of the same tool keeps Running by id, so only id wiring at toolStart passes', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUse', async () => ({}))
   on('classic.PostToolUseFailure', async () => ({}))
@@ -534,7 +552,7 @@ test('a parallel batch of the same tool keeps Running by id, so only id wiring a
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('a question closing during a running call falls back to that call, not to AskUserQuestion', async ($, on) => {
+test('a question closing during a running call falls back to that call, not to AskUserQuestion', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUse', async () => ({}))
   on('tool.call', { tool: 'Bash' }, async () => ({ result: 'ok' }))
@@ -550,7 +568,7 @@ test('a question closing during a running call falls back to that call, not to A
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('PermissionRequest alone shows Waiting for permission, repeating it is harmless, and the tool ending clears it', async ($, on) => {
+test('PermissionRequest alone shows Waiting for permission, repeating it is harmless, and the tool ending clears it', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PermissionRequest', async () => ({}))
   on('classic.PostToolUse', async () => ({}))
@@ -567,7 +585,7 @@ test('PermissionRequest alone shows Waiting for permission, repeating it is harm
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('PermissionDenied clears the permission label when no PostToolUse follows', async ($, on) => {
+test('PermissionDenied clears the permission label when no PostToolUse follows', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PermissionRequest', async () => ({}))
   on('classic.PermissionDenied', async () => ({}))
@@ -581,7 +599,7 @@ test('PermissionDenied clears the permission label when no PostToolUse follows',
   expect(statuses.at(-1)).toBe('Working')
 })
 
-test('PermissionDenied for one of two parallel calls keeps the other Running', async ($, on) => {
+test('PermissionDenied for one of two parallel calls keeps the other Running', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PermissionRequest', async () => ({}))
   on('classic.PermissionDenied', async () => ({}))
@@ -596,7 +614,7 @@ test('PermissionDenied for one of two parallel calls keeps the other Running', a
   expect(statuses.at(-1)).toBe('Running Bash')
 })
 
-test('PermissionDenied for a different call keeps the open permission label', async ($, on) => {
+test('PermissionDenied for a different call keeps the open permission label', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PermissionRequest', async () => ({}))
   on('classic.PermissionDenied', async () => ({}))
@@ -612,7 +630,7 @@ test('PermissionDenied for a different call keeps the open permission label', as
   expect(statuses.at(-1)).toBe('Waiting for permission: Bash')
 })
 
-test('AskUserQuestion shows Waiting for your answer until PostToolUse', async ($, on) => {
+test('AskUserQuestion shows Waiting for your answer until PostToolUse', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PostToolUse', async () => ({}))
   const gate = pending()
@@ -643,7 +661,7 @@ test('the plan tool never shows as Running and its answer passes through', async
   expect(statuses).toEqual(['Plan 0/3 · Outline'])
 })
 
-test('a TaskCreate passes through the catch-all hook unchanged and ends Running at PostToolUse', async ($, on) => {
+test('a TaskCreate passes through the catch-all hook unchanged and ends Running at PostToolUse', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   stubTasks(on)
   await $.turn.start({ text: 'go', turnId: 't1' })
@@ -664,7 +682,7 @@ test('a subagent tool call does not show as Running', async ($, on) => {
   expect(statuses).toEqual([])
 })
 
-test('a subagent tool call ending clears its permission label but not a main-loop Running phase', async ($, on) => {
+test('a subagent tool call ending clears its permission label but not a main-loop Running phase', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PermissionRequest', async () => ({}))
   on('classic.PostToolUse', async () => ({}))
@@ -690,7 +708,7 @@ test('a subagent tool call ending clears its permission label but not a main-loo
   await main
 })
 
-test('PreCompact shows Compacting until PostCompact, and a subagent compaction shows nothing', async ($, on) => {
+test('PreCompact shows Compacting until PostCompact, and a subagent compaction shows nothing', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('classic.PreCompact', async () => ({}))
   on('classic.PostCompact', async () => ({}))
@@ -729,7 +747,7 @@ test('subagent start and stop count running subagents, by id', async ($, on) => 
   expect(statuses.at(-1)).toBeUndefined()
 })
 
-test('turn.complete shows Interrupted and Error, and answer returns to idle', async ($, on) => {
+test('turn.complete shows Interrupted and Error, and answer returns to idle', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('turn.complete', async (_$, e) => ({ text: e.answer }))
   const done = (reason: 'answer' | 'aborted' | 'error') =>
@@ -752,7 +770,7 @@ test('StopFailure shows Error with the detail', async ($, on) => {
   expect(statuses.at(-1)).toBe('Error: rate_limit')
 })
 
-test('a subagent turn.complete leaves the status unchanged', async ($, on) => {
+test('a subagent turn.complete leaves the status unchanged', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('turn.complete', async (_$, e) => ({ text: e.answer }))
   await $.turn.start({ text: 'go', turnId: 't1' })
@@ -769,7 +787,7 @@ test('a subagent turn.complete leaves the status unchanged', async ($, on) => {
   expect(before).toBe('Working')
 })
 
-test('session.end with reason clear resets the activity; other reasons do not', async ($, on) => {
+test('session.end with reason clear resets the activity; other reasons do not', { options: { statusLine: true } }, async ($, on) => {
   const { statuses } = activitySetup(on)
   on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
   await $.turn.start({ text: 'go', turnId: 't1' })
@@ -1005,7 +1023,7 @@ const missSetup = async ($: Engine, on: On, count: number, swapTo: number): Prom
   return world
 }
 
-test('mirror: a TaskCreate that errors on the first attempt and fits on the retry is mirrored', async ($, on) => {
+test('mirror: a TaskCreate that errors on the first attempt and fits on the retry is mirrored', { options: { statusLine: true } }, async ($, on) => {
   const { statuses, logs } = await missSetup($, on, 60, 30)
   await $.tool.call(CREATE)
   await finish($, 'TaskCreate', { subject: 'Write docs', activeForm: 'Writing docs' }, CREATED)

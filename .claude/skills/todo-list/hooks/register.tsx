@@ -69,6 +69,11 @@ const paneFit = atom({ plugin: 'todo-list', key: 'paneFit' } as const, null as P
 // closed. A /clear resets it to 'idle' and no session.start follows, so a cleared session does not re-open.
 const firstPromptOpen = atom({ plugin: 'todo-list', key: 'firstPromptOpen' } as const, 'idle' as 'idle' | 'armed' | 'done')
 
+// Whether the status line is drawn: the statusLine option, copied in at session.start and at every
+// turn.start (a /clear resets the atoms and no session.start follows). The default only holds
+// before the first of those, so it never draws in a real session with the option off.
+const statusShown = atom({ plugin: 'todo-list', key: 'statusShown' } as const, true as boolean)
+
 // Runs a hook body and returns its fallback on any throw. Top-level function declaration because
 // `$` is passed to it (plugin validate rule).
 async function guard<T>(
@@ -97,6 +102,7 @@ function isPlanTool(tool: string, stored: string | null): boolean {
 }
 
 async function refreshStatus($: EngineInterface): Promise<void> {
+  if (!(await read($, statusShown))) return
   const [p, a] = await Promise.all([read($, plan), read($, activity)])
   $.ui.status(statusLine(p, a))
 }
@@ -439,8 +445,11 @@ export const register: Register = (on, options) => {
   const enforceConfig = options.enforce !== false
   // Effective accent = saved `/todo color` (accentOverride) ?? plugin option ?? default; see resolveAccent.
   const accentConfig = resolveAccent(null, options.accentColor)
+  // Off unless the person turns it on.
+  const statusConfig = options.statusLine === true
 
   on('session.start', async ($, e, next) => {
+    await guard($, 'status option', undefined, () => update($, statusShown, () => statusConfig))
     // Load the colour saved by `/todo color`. A store error or a bad value keeps the default.
     await loadSavedAccent($)
     await guard($, 'session.start', undefined, async () => {
@@ -671,6 +680,7 @@ export const register: Register = (on, options) => {
 
   // turn.start fires once per prompt of the main loop and not for subagents (T01 Q7).
   on('turn.start', async ($, e, next) => {
+    await guard($, 'status option', undefined, () => update($, statusShown, () => statusConfig))
     if ((await read($, accentOverride)) === null) await loadSavedAccent($)
     await guard($, 'turn.start', undefined, async () => {
       const current = await read($, plan)

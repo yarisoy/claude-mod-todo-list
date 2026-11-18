@@ -1,21 +1,21 @@
 <div align="center">
   <img src=".claude/skills/todo-list/.claude-plugin/icon.png" alt="Todo List icon" width="120" height="120">
   <h1>Todo List for Claude Code</h1>
-  <p>Claude's task plan as a live tree in a pane and the status line.</p>
+  <p>Claude's task plan as a live tree in a pane, and optionally the status line.</p>
 
   [![CI](https://github.com/0xnicholasy/claude-mod-todo-list/actions/workflows/ci.yml/badge.svg)](https://github.com/0xnicholasy/claude-mod-todo-list/actions/workflows/ci.yml) ![Version](https://img.shields.io/github/package-json/v/0xnicholasy/claude-mod-todo-list?filename=.claude%2Fskills%2Ftodo-list%2F.claude-plugin%2Fplugin.json&label=version) [![License](https://img.shields.io/github/license/0xnicholasy/claude-mod-todo-list)](LICENSE) [![Stars](https://img.shields.io/github/stars/0xnicholasy/claude-mod-todo-list?style=flat)](https://github.com/0xnicholasy/claude-mod-todo-list/stargazers)
 
   <a href="#installation">Install</a> · <a href="#usage">Usage</a> · <a href="#configuration">Configuration</a> · <a href="#how-it-works-hooks">How it works</a>
 </div>
 
-Todo List is a Claude Code plugin that shows Claude's task plan as a tree in a pane and the status line, with live activity. Claude writes the plan through a plugin tool, `mcp__todo-list__plan`, and state-changing tools wait until a plan exists.
+Todo List is a Claude Code plugin that shows Claude's task plan as a tree in a pane (and, if you turn it on, the status line), with live activity. Claude writes the plan through a plugin tool, `mcp__todo-list__plan`, and state-changing tools wait until a plan exists.
 
 ![Todo List pane showing a plan tree with completed, running and blocked steps](docs/pane.png)
 
 ## Features
 
 - Plan tree tool. Claude writes a tree (up to 3 levels, 60 nodes) through `mcp__todo-list__plan`. Steps that do not conflict can be grouped as parallel.
-- Pane and status line. Both draw the tree with per-node status and a progress bar.
+- Pane, plus an optional status line (`statusLine` option, off by default). The pane draws the tree with per-node status and a progress bar; the status line a one-line summary.
 - Live activity. The current activity (running a tool, waiting for permission, compacting, subagents running) comes from session events, not from Claude's own report.
 - Plan-first enforcement. Edit, Write, Bash and other state-changing tools are denied until a plan exists. Enforcement fails open and can be turned off.
 - `/todo` command. Reopen the pane, clear the plan, switch enforcement, and set the accent color (Claude orange by default, saved across sessions).
@@ -62,7 +62,7 @@ Claude creates the plan on its own: the plugin adds one instruction to the syste
 | `/todo on` | Turn plan enforcement back on. |
 | `/todo color <name\|#hex\|reset>` | Set the accent color, saved for every session. `reset` returns to the `accentColor` option. |
 
-The pane shows only while there is a plan. On an interactive terminal it opens when Claude creates a plan and closes when the plan is cleared (`/todo clear` or `/clear`); a pane you close stays closed until the next new plan. The host holds an unasked pane undrawn on a narrow terminal (below 144 columns, or 110 once you have opened it), so the first prompt with a plan opens it again if it is still undrawn (once per session). `/todo` opens the pane at any time, even with no plan. The status line shows a short form, for example `Plan 3/7 · Escaping quotes and commas · Running Bash`.
+The pane shows only while there is a plan. On an interactive terminal it opens when Claude creates a plan and closes when the plan is cleared (`/todo clear` or `/clear`); a pane you close stays closed until the next new plan. The host holds an unasked pane undrawn on a narrow terminal (below 144 columns, or 110 once you have opened it), so the first prompt with a plan opens it again if it is still undrawn (once per session). `/todo` opens the pane at any time, even with no plan. With the `statusLine` option on, the status line under the prompt shows a short form, for example `Plan 3/7 · Escaping quotes and commas · Running Bash`. It is off by default.
 
 ### Pane
 
@@ -154,6 +154,7 @@ Options are set at install (`--config`), in settings, or per run:
 | Option | Type | Default | Effect |
 |---|---|---|---|
 | `enforce` | boolean | `true` | Block state-changing tools until a plan exists. |
+| `statusLine` | boolean | `false` | Also show the plan and live activity as a status line under the prompt. Turn on with `/plugin configure todo-list@claude-mod-todo-list` or `--config statusLine=true`, then `/reload-plugins` or restart. |
 | `accentColor` | string | `claude` | Theme key or color for the current step, running steps and progress bar, for example `claude`, `magenta`, `#c084fc`. An invalid value falls back to Claude orange. |
 
 ```
@@ -172,7 +173,7 @@ The plugin registers 21 hooks in `.claude/skills/todo-list/hooks/register.tsx`. 
 
 | Hook | What it does | What it decides, and when | What it changes |
 |---|---|---|---|
-| `session.start` | Loads the saved accent color, registers the plan tool and the `/todo` command, and on an interactive terminal arms the first-prompt pane open. | Nothing. | Registers the plan tool and `/todo`; invalidates the cached `tool.describe` answer. |
+| `session.start` | Reads the `statusLine` option, loads the saved accent color, registers the plan tool and the `/todo` command, and on an interactive terminal arms the first-prompt pane open. | Nothing. | Registers the plan tool and `/todo`; invalidates the cached `tool.describe` answer. |
 | `command.run` (`todo`) | Runs `/todo` and its subcommands. | Which subcommand to run, from the typed arguments. | Opens or resizes the pane, clears the plan, flips the session enforcement switch, writes or deletes the saved accent color. |
 | `tool.describe` | For the plan tool only, marks it as not deferred so the model sees it on the first turn. | Nothing; other tools pass through. | Sets `isDeferred: false` on the plan tool's description. |
 | `classic.PermissionRequest` | Records "waiting for permission" for the tool. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
@@ -186,12 +187,12 @@ The plugin registers 21 hooks in `.claude/skills/todo-list/hooks/register.tsx`. 
 | `turn.complete` | Records how the turn ended (answer, interrupted, error). | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
 | `session.end` | On `/clear`, resets the activity state and closes the pane. | Nothing. Observe-only. | Passes the event on unchanged. Closes the pane. |
 | `tool.call` (catch-all) | For a main-loop call other than the plan tool, runs the gate, then records "Running <tool>" (or "Waiting for your answer" for `AskUserQuestion`). Subagent calls and plan tool calls pass through. | Denies a state-changing main-loop tool (see Enforcement for the list) when the task has no plan and enforcement is on. Allows everything else. Fails open: guard failure, plan tool not registered or not offered, enforcement off, or 3 denies in the turn. | A denied call returns a fixed deny message instead of running. For all other calls the event goes on unchanged. Updates activity. |
-| `tool.call` (`mcp__todo-list__plan`) | Answers every call to the plan tool: applies the op to the plan and returns the plan text, or an `Error:` text for a bad op. | Why the mod needs this hook: the API serves a plugin's own registered tool only from a `tool.call` hook, and no other hook or the core serves it. What it decides: nothing is refused; it always answers calls to this one tool. When: on every call to `mcp__todo-list__plan`. A subagent's call gets an error text and changes nothing. | Returns the plan text as the tool result and updates the plan and the status line. Opens the pane when the plan goes from empty to non-empty and closes it when the plan empties. Never calls `next`. |
+| `tool.call` (`mcp__todo-list__plan`) | Answers every call to the plan tool: applies the op to the plan and returns the plan text, or an `Error:` text for a bad op. | Why the mod needs this hook: the API serves a plugin's own registered tool only from a `tool.call` hook, and no other hook or the core serves it. What it decides: nothing is refused; it always answers calls to this one tool. When: on every call to `mcp__todo-list__plan`. A subagent's call gets an error text and changes nothing. | Returns the plan text as the tool result and updates the plan and, with `statusLine` on, the status line. Opens the pane when the plan goes from empty to non-empty and closes it when the plan empties. Never calls `next`. |
 | `classic.PostToolUse` | After a call finishes, ends its "Running" state. After a main-loop `TaskCreate`, `TaskUpdate` or `TodoWrite`, mirrors the call into the plan. | Nothing. A response in a shape the plugin does not know is logged and skipped. | Passes the event on unchanged. Adds, updates or removes plan nodes; updates activity. |
 | `classic.PostToolUseFailure` | After a failed call, ends its "Running" state. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
 | `prompt.compose` | Checks whether the plan tool is in the request's tool list and records it. | Whether to add the instruction: only when the plan tool is offered. | Adds one system prompt section (`todo-list:plan`) that asks Claude to plan first. Adds nothing when the tool is not offered. |
 | `prompt.submit` | On the first prompt of a session that has a plan, opens the pane if it is not placed. | Nothing. | Passes the event on unchanged. May open the pane. |
-| `turn.start` | Reloads the saved accent color after a `/clear`, resets the per-turn deny count, records "Working", and sends the current plan to the model. | Whether to send the plan: only when the plan has nodes. | Appends the current plan as one user-role row the model reads (the person does not see it as typed). Updates task state and activity. Passes the event on unchanged. |
+| `turn.start` | Re-reads the `statusLine` option and reloads the saved accent color after a `/clear`, resets the per-turn deny count, records "Working", and sends the current plan to the model. | Whether to send the plan: only when the plan has nodes. | Appends the current plan as one user-role row the model reads (the person does not see it as typed). Updates task state and activity. Passes the event on unchanged. |
 | `ui.render` (`Pane`, `todo`) | Draws the plan tree. If the terminal size, placement or plan height changed, re-opens the pane so the host resizes it. | Nothing. | Returns the pane contents. May close and reopen the pane. |
 
 Observe-only hooks: `classic.PermissionRequest`, `classic.PermissionDenied`, `classic.SubagentStart`, `classic.SubagentStop`, `classic.StopFailure`, `classic.Notification`, `classic.PreCompact`, `classic.PostCompact`, `classic.PostToolUse`, `classic.PostToolUseFailure`, `turn.complete`, `session.end`. They update the plugin's own activity state and pass the host's event through unchanged. `classic.PostToolUse` also copies a finished `TaskCreate`, `TaskUpdate` or `TodoWrite` into the plan; it never changes the tool's result.
