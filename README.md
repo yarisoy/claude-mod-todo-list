@@ -23,12 +23,14 @@ Todo List is a Claude Code plugin that shows Claude's task plan as a tree in a p
 
 ## Installation
 
-Install from GitHub:
+This is a fork of [0xnicholasy/claude-mod-todo-list](https://github.com/0xnicholasy/claude-mod-todo-list). It adds: the pane shows only while there is a plan, the status line is opt-in (`statusLine`), and the stop check (`stopCheck`). Install from this fork:
 
 ```
-/plugin marketplace add 0xnicholasy/claude-mod-todo-list
+/plugin marketplace add yarisoy/claude-mod-todo-list
 /plugin install todo-list@claude-mod-todo-list
 ```
+
+This tracks the fork's `main` branch. Update with `claude plugin marketplace update claude-mod-todo-list`, then `/reload-plugins`. If you already added the upstream marketplace, remove it first (`claude plugin marketplace remove claude-mod-todo-list`): both use the same name. To pin a release instead, add `#<commit-sha>` to the repo, for example `yarisoy/claude-mod-todo-list#<sha>`.
 
 The same works from the shell as `claude plugin marketplace add ...` and `claude plugin install ...`. Set options at install with `--config`, for example `--config accentColor=#c084fc` or `--config enforce=false`. Add `-s project` to install for one project only (scopes: `user`, `project`, `local`; default `user`).
 
