@@ -1402,3 +1402,53 @@ test('a saved accent is reapplied at the first turn after /clear resets the atom
   await $.turn.start({ text: 'go', turnId: 't1' })
   expect(await drawPane($)).toContain('"color":"magenta"')
 })
+
+// The stop check. The host beneath answers classic.Stop with no block of its own.
+const stopAt = (on: On): void => {
+  on('classic.Stop', async () => ({}))
+}
+
+test('a stop with open steps is sent back twice a turn, and a new turn resets the count', async ($, on) => {
+  setup(on)
+  stopAt(on)
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('store.get', async () => ({ value: undefined }))
+  recordRows(on)
+  await $.tool.call(SET)
+  const first = await $.classic.Stop({ stop_hook_active: false })
+  expect(first.block).toContain('You are not done: 3 plan steps are still open')
+  expect(first.block).toContain('1.1 [pending] Outline')
+  expect(first.block).toContain(TOOL)
+  expect((await $.classic.Stop({ stop_hook_active: true })).block).toBeDefined()
+  expect((await $.classic.Stop({ stop_hook_active: true })).block).toBeUndefined()
+  await $.turn.start({ text: 'go on', turnId: 't2' })
+  expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeDefined()
+})
+
+test('a stop with every step done, or with background work pending, is let through', async ($, on) => {
+  setup(on)
+  stopAt(on)
+  await $.tool.call(SET)
+  const waiting = await $.classic.Stop({
+    stop_hook_active: false,
+    background_tasks: [{ id: 'b1' }] as unknown as NonNullable<Parameters<typeof $.classic.Stop>[0]['background_tasks']>, // the summary's fields do not matter here
+  })
+  expect(waiting.block).toBeUndefined()
+  await $.tool.call({
+    tool: TOOL,
+    op: 'update',
+    updates: [
+      { id: '1.1', status: 'completed' },
+      { id: '1.2', status: 'completed' },
+      { id: '2', status: 'skipped', note: 'not needed' },
+    ],
+  })
+  expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+})
+
+test('the stopCheck option off lets every stop through', { options: { stopCheck: false } }, async ($, on) => {
+  setup(on)
+  stopAt(on)
+  await $.tool.call(SET)
+  expect((await $.classic.Stop({ stop_hook_active: false })).block).toBeUndefined()
+})

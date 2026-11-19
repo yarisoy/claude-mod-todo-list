@@ -1,6 +1,6 @@
 {
   "name": "todo-list",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Plan trees written by Claude through a plan tool, shown in a pane and status line with live activity.",
   "author": {
     "name": "0xnicholasy",
@@ -22,6 +22,12 @@
       "type": "boolean",
       "title": "Enforce plan",
       "description": "Block state-changing tools until a plan exists",
+      "default": true
+    },
+    "stopCheck": {
+      "type": "boolean",
+      "title": "Stop check",
+      "description": "When Claude stops with plan steps still pending or in progress, send it back to finish or update them (at most twice a turn)",
       "default": true
     },
     "statusLine": {

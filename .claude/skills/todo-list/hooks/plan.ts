@@ -277,6 +277,10 @@ export const currentNode = (plan: Plan): PlanNode | null => {
 // True while any leaf is pending, in_progress or blocked (blocked work is still open).
 export const activeLeaves = (plan: Plan): PlanNode[] => leaves(plan).filter(n => n.status === 'in_progress')
 
+// Leaves still to do: pending or in progress. A blocked leaf waits on something outside the turn.
+export const unfinishedLeaves = (plan: Plan): PlanNode[] =>
+  leaves(plan).filter(n => n.status === 'pending' || n.status === 'in_progress')
+
 const ancestorsOf = (plan: Plan, id: string): string[] => {
   const byId = new Map(plan.nodes.map(n => [n.id, n]))
   const out: string[] = []

@@ -18,6 +18,7 @@ Todo List is a Claude Code plugin that shows Claude's task plan as a tree in a p
 - Pane, plus an optional status line (`statusLine` option, off by default). The pane draws the tree with per-node status and a progress bar; the status line a one-line summary.
 - Live activity. The current activity (running a tool, waiting for permission, compacting, subagents running) comes from session events, not from Claude's own report.
 - Plan-first enforcement. Edit, Write, Bash and other state-changing tools are denied until a plan exists. Enforcement fails open and can be turned off.
+- Stop check. When Claude ends its turn with plan steps still pending or in progress, it is sent back with the list: finish them or update the plan. At most twice a turn; can be turned off.
 - `/todo` command. Reopen the pane, clear the plan, switch enforcement, and set the accent color (Claude orange by default, saved across sessions).
 
 ## Installation
@@ -147,6 +148,26 @@ Enforcement fails open. It allows every call when:
 - the gate throws an error;
 - 3 calls were denied in one turn without a plan call (the gate pauses for the rest of that turn and shows a toast).
 
+### Stop check
+
+When Claude ends its turn (the `Stop` event) while the plan still has pending or in-progress steps, the plugin blocks the stop and tells Claude, for example:
+
+```
+You are not done: 2 plan steps are still open:
+2 [in_progress] Process data
+3 [pending] Write summary
+Complete them, or update the plan with mcp__todo-list__plan if they are no longer needed: completed if already done, skipped with a note if not needed, blocked with a note if you need the person's input (then ask them).
+```
+
+Completed, skipped and blocked steps count as settled, so a step waiting on your answer should be marked blocked. The check lets the stop through when:
+
+- the `stopCheck` option is `false`;
+- the turn has already been sent back twice (the count resets with each new prompt);
+- background tasks or scheduled wake-ups (`/loop`, cron) will resume the session;
+- the check throws an error.
+
+Subagents stop through `SubagentStop`, which the check does not touch.
+
 ## Configuration
 
 Options are set at install (`--config`), in settings, or per run:
@@ -154,6 +175,7 @@ Options are set at install (`--config`), in settings, or per run:
 | Option | Type | Default | Effect |
 |---|---|---|---|
 | `enforce` | boolean | `true` | Block state-changing tools until a plan exists. |
+| `stopCheck` | boolean | `true` | Send Claude back when it stops with plan steps still pending or in progress (see Stop check). |
 | `statusLine` | boolean | `false` | Also show the plan and live activity as a status line under the prompt. Turn on with `/plugin configure todo-list@claude-mod-todo-list` or `--config statusLine=true`, then `/reload-plugins` or restart. |
 | `accentColor` | string | `claude` | Theme key or color for the current step, running steps and progress bar, for example `claude`, `magenta`, `#c084fc`. An invalid value falls back to Claude orange. |
 
@@ -166,10 +188,10 @@ A color saved with `/todo color` takes precedence over `accentColor`. The `claud
 
 ## How it works: hooks
 
-The plugin registers 21 hooks in `.claude/skills/todo-list/hooks/register.tsx`. Two of them decide anything: the catch-all `tool.call` hook (the gate) and the `tool.call` hook for the plan tool (it answers calls to that one tool). Hooks pass the host's event or result through unchanged except where the last column says otherwise. A hook that throws is caught and logged to the debug log, and the call proceeds as if the plugin were not there.
+The plugin registers 22 hooks in `.claude/skills/todo-list/hooks/register.tsx`. Three of them decide anything: the catch-all `tool.call` hook (the gate), the `tool.call` hook for the plan tool (it answers calls to that one tool) and the `classic.Stop` hook (the stop check). Hooks pass the host's event or result through unchanged except where the last column says otherwise. A hook that throws is caught and logged to the debug log, and the call proceeds as if the plugin were not there.
 
 <details>
-<summary>All 21 hooks</summary>
+<summary>All 22 hooks</summary>
 
 | Hook | What it does | What it decides, and when | What it changes |
 |---|---|---|---|
@@ -180,6 +202,7 @@ The plugin registers 21 hooks in `.claude/skills/todo-list/hooks/register.tsx`. 
 | `classic.PermissionDenied` | Ends the denied call's activity and clears the permission label. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
 | `classic.SubagentStart` | Records that a subagent started. | Nothing. Observe-only. | Passes the event on unchanged. Updates the subagent count. |
 | `classic.SubagentStop` | Records that a subagent stopped. | Nothing. Observe-only. | Passes the event on unchanged. Updates the subagent count. |
+| `classic.Stop` | Checks the plan when Claude ends its turn. | Blocks the stop while pending or in-progress steps remain, at most twice a turn; lets it through when `stopCheck` is off, when background tasks or scheduled wake-ups are pending, or on error. | Adds a `block` with the list of open steps, which sends Claude back to work. |
 | `classic.StopFailure` | Records that the turn ended in an error. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
 | `classic.Notification` | Writes the notification type to the debug log. | Nothing. Observe-only. | Passes the event on unchanged. |
 | `classic.PreCompact` | Marks "Compacting" for the main session when a compaction starts. A subagent's compaction is ignored. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
@@ -192,7 +215,7 @@ The plugin registers 21 hooks in `.claude/skills/todo-list/hooks/register.tsx`. 
 | `classic.PostToolUseFailure` | After a failed call, ends its "Running" state. | Nothing. Observe-only. | Passes the event on unchanged. Updates activity. |
 | `prompt.compose` | Checks whether the plan tool is in the request's tool list and records it. | Whether to add the instruction: only when the plan tool is offered. | Adds one system prompt section (`todo-list:plan`) that asks Claude to plan first. Adds nothing when the tool is not offered. |
 | `prompt.submit` | On the first prompt of a session that has a plan, opens the pane if it is not placed. | Nothing. | Passes the event on unchanged. May open the pane. |
-| `turn.start` | Re-reads the `statusLine` option and reloads the saved accent color after a `/clear`, resets the per-turn deny count, records "Working", and sends the current plan to the model. | Whether to send the plan: only when the plan has nodes. | Appends the current plan as one user-role row the model reads (the person does not see it as typed). Updates task state and activity. Passes the event on unchanged. |
+| `turn.start` | Re-reads the `statusLine` option, resets the stop-check count, and reloads the saved accent color after a `/clear`, resets the per-turn deny count, records "Working", and sends the current plan to the model. | Whether to send the plan: only when the plan has nodes. | Appends the current plan as one user-role row the model reads (the person does not see it as typed). Updates task state and activity. Passes the event on unchanged. |
 | `ui.render` (`Pane`, `todo`) | Draws the plan tree. If the terminal size, placement or plan height changed, re-opens the pane so the host resizes it. | Nothing. | Returns the pane contents. May close and reopen the pane. |
 
 Observe-only hooks: `classic.PermissionRequest`, `classic.PermissionDenied`, `classic.SubagentStart`, `classic.SubagentStop`, `classic.StopFailure`, `classic.Notification`, `classic.PreCompact`, `classic.PostCompact`, `classic.PostToolUse`, `classic.PostToolUseFailure`, `turn.complete`, `session.end`. They update the plugin's own activity state and pass the host's event through unchanged. `classic.PostToolUse` also copies a finished `TaskCreate`, `TaskUpdate` or `TodoWrite` into the plan; it never changes the tool's result.

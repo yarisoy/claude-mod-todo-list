@@ -20,6 +20,7 @@ import {
   PLAN_TOOL_SHORT_NAME,
   touchesPlan,
 } from './plan-tool'
+import { stopNudge } from './stop'
 import { taskCreateFrom, taskUpdateFailed, taskUpdateFrom, todosFrom } from './post-tool'
 import { clean } from './sanitize'
 import { ACCENT_STORE_KEY, resolveAccent, validAccent } from './accent'
@@ -73,6 +74,9 @@ const firstPromptOpen = atom({ plugin: 'todo-list', key: 'firstPromptOpen' } as 
 // turn.start (a /clear resets the atoms and no session.start follows). The default only holds
 // before the first of those, so it never draws in a real session with the option off.
 const statusShown = atom({ plugin: 'todo-list', key: 'statusShown' } as const, true as boolean)
+
+// How many times this turn's stop was sent back for unfinished steps (stop.ts); turn.start resets it.
+const stopNudges = atom({ plugin: 'todo-list', key: 'stopNudges' } as const, 0)
 
 // Runs a hook body and returns its fallback on any throw. Top-level function declaration because
 // `$` is passed to it (plugin validate rule).
@@ -447,6 +451,8 @@ export const register: Register = (on, options) => {
   const accentConfig = resolveAccent(null, options.accentColor)
   // Off unless the person turns it on.
   const statusConfig = options.statusLine === true
+  // On unless the person turns it off.
+  const stopConfig = options.stopCheck !== false
 
   on('session.start', async ($, e, next) => {
     await guard($, 'status option', undefined, () => update($, statusShown, () => statusConfig))
@@ -573,6 +579,30 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The stop check: Claude ending its turn while the plan has pending or in-progress steps is sent
+  // back with the list (a classic Stop block), at most MAX_STOP_NUDGES times a turn. A session that
+  // background work or a scheduled wake will resume is left to stop. Subagents raise SubagentStop,
+  // not this. A guard failure lets the stop through.
+  on('classic.Stop', async ($, e, next) => {
+    const result = await next(e)
+    if (!stopConfig) return result
+    if ((e.background_tasks?.length ?? 0) > 0 || (e.session_crons?.length ?? 0) > 0) return result
+
+    return guard($, 'stop check', result, async () => {
+      const [p, stored] = await Promise.all([read($, plan), read($, planTool)])
+      const name = stored.name ?? PLAN_TOOL_FULL_NAME
+      // `update` reruns the reducer when its write misses ifVersion, so `text` is reassigned on every attempt.
+      let text: string | undefined
+      await update($, stopNudges, n => {
+        text = stopNudge(p, n, name)
+
+        return text === undefined ? n : n + 1
+      })
+
+      return text === undefined ? result : { ...result, block: text }
+    })
+  })
+
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       await guard($, 'session.end', undefined, () => applyActivity($, { type: 'sessionClear' }))
@@ -681,6 +711,7 @@ export const register: Register = (on, options) => {
   // turn.start fires once per prompt of the main loop and not for subagents (T01 Q7).
   on('turn.start', async ($, e, next) => {
     await guard($, 'status option', undefined, () => update($, statusShown, () => statusConfig))
+    await guard($, 'stop nudges reset', undefined, () => update($, stopNudges, () => 0))
     if ((await read($, accentOverride)) === null) await loadSavedAccent($)
     await guard($, 'turn.start', undefined, async () => {
       const current = await read($, plan)
