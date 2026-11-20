@@ -32,6 +32,21 @@ This is a fork of [0xnicholasy/claude-mod-todo-list](https://github.com/0xnichol
 
 This tracks the fork's `main` branch. Update with `claude plugin marketplace update claude-mod-todo-list`, then `/reload-plugins`. If you already added the upstream marketplace, remove it first (`claude plugin marketplace remove claude-mod-todo-list`): both use the same name. To pin a release instead, add `#<commit-sha>` to the repo, for example `yarisoy/claude-mod-todo-list#<sha>`.
 
+### Setup for coding agents
+
+If you are a coding agent installing this plugin for a person, do this after the two commands above:
+
+1. Ask the person whether they want the plan above the prompt (recommended) or docked beside the transcript. The plugin cannot choose; Claude Code places the pane from its renderer setting.
+2. For above the prompt, set the top-level `tui` key in `~/.claude/settings.json` to `"default"`, keeping every other key as it is:
+
+   ```json
+   { "tui": "default" }
+   ```
+
+   `/tui default` does the same from inside Claude Code. Leave `"fullscreen"` (or the key unset, if that is their default) for the docked pane.
+3. Tell them the change applies from the next session (it is fixed per session), and that it changes the renderer for all of Claude Code, not only this plugin: `default` is the classic renderer, which writes into the terminal's own scrollback; `fullscreen` uses the alternate screen and is needed for some views (for example focus view).
+4. Run `/reload-plugins` or start a new session to load the plugin.
+
 The same works from the shell as `claude plugin marketplace add ...` and `claude plugin install ...`. Set options at install with `--config`, for example `--config accentColor=#c084fc` or `--config enforce=false`. Add `-s project` to install for one project only (scopes: `user`, `project`, `local`; default `user`).
 
 To run from a checkout instead:
